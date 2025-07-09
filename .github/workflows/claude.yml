@@ -1,18 +1,18 @@
-# # This workflow runs an automated pull request code review when labeled
-# name: Claude
-# on:
-#   pull_request_target:
-#     branches: ["main"]
-#     types:
-#       - labeled
-#       - opened
-#       - reopened
-#       - synchronize
-#       - ready_for_review
-# permissions: {}
-# jobs:
-#   precheck:
-#     name: Code Review Upon All Successful Runs
+# This workflow runs an automated pull request code review when labeled
+name: Claude
+on:
+  pull_request_target:
+    branches: ["main"]
+    types:
+      - labeled
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+permissions: {}
+jobs:
+  precheck:
+    name: Code Review Upon All Successful Runs
 #     runs-on: ubuntu-latest
 #     env:
 #       SLEEP_WAIT: ${{ vars.SLEEP_WAIT }}

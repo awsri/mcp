@@ -14,11 +14,20 @@
 
 FROM python:3.10-slim
 
+# Create a non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
 WORKDIR /app
 
 COPY . /app/
 
 RUN pip install --no-cache-dir -e .
+
+# Change ownership of the app directory to the non-root user
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
 
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 CMD [ "/app/docker-healthcheck.sh" ]
 

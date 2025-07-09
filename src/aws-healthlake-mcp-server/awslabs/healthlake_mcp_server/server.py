@@ -15,8 +15,6 @@
 #!/usr/bin/env python3
 
 import boto3
-from botocore.auth import SigV4Auth
-from botocore.awsrequest import AWSRequest
 import os
 import requests
 import uuid
@@ -25,6 +23,8 @@ from awslabs.healthlake_mcp_server.common import (
     handle_exceptions,
     mutation_check,
 )
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 from botocore.config import Config
 from datetime import datetime
 from mcp.server.fastmcp import FastMCP
@@ -72,20 +72,20 @@ def _make_fhir_request(
 
     # Create a request with AWS SigV4 authentication
     import json as json_module
-    
+
     # Create an AWS request for signing
     aws_request = AWSRequest(
         method=method,
         url=url,
         data=json_module.dumps(json_data) if json_data else None,
         params=params,
-        headers=request_headers
+        headers=request_headers,
     )
-    
+
     # Sign the request
     auth = SigV4Auth(credentials, 'healthlake', region_name)
     auth.add_auth(aws_request)
-    
+
     # Convert back to requests format and send
     with requests.Session() as session:
         response = session.request(
@@ -93,7 +93,7 @@ def _make_fhir_request(
             url=aws_request.url,
             headers=dict(aws_request.headers),
             data=aws_request.body,
-            params=params
+            params=params,
         )
 
         # Handle FHIR-specific error responses

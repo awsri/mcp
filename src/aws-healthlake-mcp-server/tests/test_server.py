@@ -14,9 +14,6 @@
 
 import os
 import pytest
-from unittest.mock import MagicMock, patch
-from moto import mock_aws
-
 from awslabs.healthlake_mcp_server.server import (
     create_datastore,
     create_fhir_bundle,
@@ -30,6 +27,8 @@ from awslabs.healthlake_mcp_server.server import (
     search_fhir_resources_advanced,
     validate_fhir_resource,
 )
+from moto import mock_aws
+from unittest.mock import MagicMock, patch
 
 
 @pytest.fixture
@@ -59,8 +58,10 @@ class TestHealthLakeServer:
 
     def test_read_fhir_resource(self, aws_credentials):
         """Test reading a FHIR resource."""
-        with patch('boto3.client') as mock_client, \
-             patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request:
+        with (
+            patch('boto3.client') as mock_client,
+            patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request,
+        ):
             # Mock the describe_fhir_datastore call
             mock_client_instance = MagicMock()
             mock_client.return_value = mock_client_instance
@@ -69,7 +70,7 @@ class TestHealthLakeServer:
                     'DatastoreEndpoint': 'https://healthlake.us-west-2.amazonaws.com/datastore/test-id/r4/'
                 }
             }
-            
+
             # Mock the FHIR request
             mock_fhir_request.return_value = {'resourceType': 'Patient', 'id': 'test-id'}
 
@@ -144,7 +145,11 @@ class TestHealthLakeServer:
             code_value='8867-4',
             code_display='Heart rate',
             status='final',
-            value_quantity={'value': 72, 'unit': 'beats/min', 'system': 'http://unitsofmeasure.org'},
+            value_quantity={
+                'value': 72,
+                'unit': 'beats/min',
+                'system': 'http://unitsofmeasure.org',
+            },
             effective_datetime='2023-01-01T10:00:00Z',
             category_code='vital-signs',
         )
@@ -158,8 +163,10 @@ class TestHealthLakeServer:
 
     def test_search_fhir_resources_advanced(self, aws_credentials):
         """Test advanced FHIR resource search."""
-        with patch('boto3.client') as mock_client, \
-             patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request:
+        with (
+            patch('boto3.client') as mock_client,
+            patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request,
+        ):
             # Mock the describe_fhir_datastore call
             mock_client_instance = MagicMock()
             mock_client.return_value = mock_client_instance
@@ -168,7 +175,7 @@ class TestHealthLakeServer:
                     'DatastoreEndpoint': 'https://healthlake.us-west-2.amazonaws.com/datastore/test-id/r4/'
                 }
             }
-            
+
             # Mock the FHIR request
             mock_fhir_request.return_value = {'resourceType': 'Bundle', 'entry': []}
 
@@ -187,8 +194,10 @@ class TestHealthLakeServer:
     @patch.dict(os.environ, {'HEALTHLAKE_MCP_READONLY': 'false'})
     def test_create_fhir_bundle(self, aws_credentials):
         """Test creating a FHIR bundle."""
-        with patch('boto3.client') as mock_client, \
-             patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request:
+        with (
+            patch('boto3.client') as mock_client,
+            patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request,
+        ):
             # Mock the describe_fhir_datastore call
             mock_client_instance = MagicMock()
             mock_client.return_value = mock_client_instance
@@ -197,7 +206,7 @@ class TestHealthLakeServer:
                     'DatastoreEndpoint': 'https://healthlake.us-west-2.amazonaws.com/datastore/test-id/r4/'
                 }
             }
-            
+
             # Mock the FHIR request
             mock_fhir_request.return_value = {'resourceType': 'Bundle', 'id': 'test-bundle-id'}
 
@@ -222,8 +231,10 @@ class TestHealthLakeServer:
 
     def test_get_fhir_resource_history(self, aws_credentials):
         """Test getting FHIR resource history."""
-        with patch('boto3.client') as mock_client, \
-             patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request:
+        with (
+            patch('boto3.client') as mock_client,
+            patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request,
+        ):
             # Mock the describe_fhir_datastore call
             mock_client_instance = MagicMock()
             mock_client.return_value = mock_client_instance
@@ -232,7 +243,7 @@ class TestHealthLakeServer:
                     'DatastoreEndpoint': 'https://healthlake.us-west-2.amazonaws.com/datastore/test-id/r4/'
                 }
             }
-            
+
             # Mock the FHIR request
             mock_fhir_request.return_value = {'resourceType': 'Bundle', 'entry': []}
 
@@ -247,8 +258,10 @@ class TestHealthLakeServer:
 
     def test_get_datastore_capabilities(self, aws_credentials):
         """Test getting datastore capabilities."""
-        with patch('boto3.client') as mock_client, \
-             patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request:
+        with (
+            patch('boto3.client') as mock_client,
+            patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request,
+        ):
             # Mock the describe_fhir_datastore call
             mock_client_instance = MagicMock()
             mock_client.return_value = mock_client_instance
@@ -257,9 +270,12 @@ class TestHealthLakeServer:
                     'DatastoreEndpoint': 'https://healthlake.us-west-2.amazonaws.com/datastore/test-id/r4/'
                 }
             }
-            
+
             # Mock the FHIR request
-            mock_fhir_request.return_value = {'resourceType': 'CapabilityStatement', 'status': 'active'}
+            mock_fhir_request.return_value = {
+                'resourceType': 'CapabilityStatement',
+                'status': 'active',
+            }
 
             result = get_datastore_capabilities(datastore_id='test-datastore-id')
 
@@ -285,8 +301,10 @@ def test_list_datastores(aws_credentials):
 
 def test_read_fhir_resource(aws_credentials):
     """Test reading a FHIR resource."""
-    with patch('boto3.client') as mock_client, \
-         patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request:
+    with (
+        patch('boto3.client') as mock_client,
+        patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request,
+    ):
         mock_client_instance = MagicMock()
         mock_client_instance.describe_fhir_datastore.return_value = {
             'DatastoreProperties': {
@@ -294,7 +312,7 @@ def test_read_fhir_resource(aws_credentials):
             }
         }
         mock_client.return_value = mock_client_instance
-        
+
         # Mock the FHIR request
         mock_fhir_request.return_value = {'resourceType': 'Patient', 'id': 'test-id'}
 
@@ -307,8 +325,10 @@ def test_read_fhir_resource(aws_credentials):
 
 def test_create_fhir_resource(aws_credentials):
     """Test creating a FHIR resource."""
-    with patch('boto3.client') as mock_client, \
-         patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request:
+    with (
+        patch('boto3.client') as mock_client,
+        patch('awslabs.healthlake_mcp_server.server._make_fhir_request') as mock_fhir_request,
+    ):
         mock_client_instance = MagicMock()
         mock_client_instance.describe_fhir_datastore.return_value = {
             'DatastoreProperties': {
@@ -316,7 +336,7 @@ def test_create_fhir_resource(aws_credentials):
             }
         }
         mock_client.return_value = mock_client_instance
-        
+
         # Mock the FHIR request
         mock_fhir_request.return_value = {'resourceType': 'Patient', 'id': 'created-id'}
 

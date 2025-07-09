@@ -15,6 +15,8 @@
 #!/usr/bin/env python3
 
 import boto3
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 import os
 import requests
 import uuid
@@ -69,16 +71,30 @@ def _make_fhir_request(
         request_headers.update(headers)
 
     # Create a request with AWS SigV4 authentication
-    auth = boto3.auth.SigV4Auth(credentials, 'healthlake', region_name)
-    request = requests.Request(
-        method=method, url=url, json=json_data, params=params, headers=request_headers
+    import json as json_module
+    
+    # Create an AWS request for signing
+    aws_request = AWSRequest(
+        method=method,
+        url=url,
+        data=json_module.dumps(json_data) if json_data else None,
+        params=params,
+        headers=request_headers
     )
-    prepared_request = request.prepare()
-    auth.add_auth(prepared_request)
-
-    # Send the request
+    
+    # Sign the request
+    auth = SigV4Auth(credentials, 'healthlake', region_name)
+    auth.add_auth(aws_request)
+    
+    # Convert back to requests format and send
     with requests.Session() as session:
-        response = session.send(prepared_request)
+        response = session.request(
+            method=aws_request.method,
+            url=aws_request.url,
+            headers=dict(aws_request.headers),
+            data=aws_request.body,
+            params=params
+        )
 
         # Handle FHIR-specific error responses
         if not response.ok:

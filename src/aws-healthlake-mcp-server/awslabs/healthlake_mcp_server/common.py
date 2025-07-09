@@ -14,24 +14,22 @@
 
 import functools
 import os
-from typing import Any, Dict, List, Optional, Union
-
-import boto3
 from botocore.exceptions import ClientError
 from loguru import logger
 from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional
 
 
 class Tag(BaseModel):
     """Tag model for HealthLake resources."""
-    
+
     key: str = Field(alias='Key')
     value: str = Field(alias='Value')
 
 
 class CreateDatastoreInput(BaseModel):
     """Input model for creating a HealthLake datastore."""
-    
+
     datastore_type_version: str
     datastore_name: Optional[str] = None
     sse_configuration: Optional[Dict[str, Any]] = None
@@ -43,7 +41,7 @@ class CreateDatastoreInput(BaseModel):
 
 class StartFHIRImportJobInput(BaseModel):
     """Input model for starting a FHIR import job."""
-    
+
     input_data_config: Dict[str, Any]
     job_output_data_config: Dict[str, Any]
     datastore_id: str
@@ -54,7 +52,7 @@ class StartFHIRImportJobInput(BaseModel):
 
 class StartFHIRExportJobInput(BaseModel):
     """Input model for starting a FHIR export job."""
-    
+
     output_data_config: Dict[str, Any]
     datastore_id: str
     data_access_role_arn: str
@@ -64,7 +62,7 @@ class StartFHIRExportJobInput(BaseModel):
 
 def handle_exceptions(func):
     """Decorator to handle exceptions in HealthLake MCP server functions."""
-    
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:
@@ -72,18 +70,18 @@ def handle_exceptions(func):
         except ClientError as e:
             error_code = e.response.get('Error', {}).get('Code', 'Unknown')
             error_message = e.response.get('Error', {}).get('Message', str(e))
-            logger.error(f"AWS ClientError: {error_code} - {error_message}")
-            
+            logger.error(f'AWS ClientError: {error_code} - {error_message}')
+
             # Re-raise with more context
-            raise Exception(f"AWS HealthLake Error ({error_code}): {error_message}") from e
+            raise Exception(f'AWS HealthLake Error ({error_code}): {error_message}') from e
         except Exception as e:
-            logger.error(f"Error in {func.__name__}: {str(e)}")
+            logger.error(f'Error in {func.__name__}: {str(e)}')
             raise
-    
+
     return wrapper
 
 
 def mutation_check():
     """Check if mutations are allowed based on environment variable."""
     if os.getenv('HEALTHLAKE_MCP_READONLY', 'false').lower() == 'true':
-        raise Exception("Operation not permitted: HealthLake MCP server is in read-only mode")
+        raise Exception('Operation not permitted: HealthLake MCP server is in read-only mode')

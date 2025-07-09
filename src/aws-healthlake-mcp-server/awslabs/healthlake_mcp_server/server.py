@@ -18,6 +18,8 @@ import boto3
 import json
 import os
 import requests
+import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from awslabs.healthlake_mcp_server.common import (
@@ -47,6 +49,78 @@ def get_healthlake_client(region_name: Optional[str] = None):
     )
     
     return boto3.client('healthlake', config=config)
+
+
+def _get_fhir_endpoint(datastore_id: str, region_name: Optional[str] = None) -> str:
+    """Get the FHIR endpoint URL for a datastore."""
+    client = get_healthlake_client(region_name)
+    datastore_info = client.describe_fhir_datastore(DatastoreId=datastore_id)
+    return datastore_info['DatastoreProperties']['DatastoreEndpoint']
+
+
+def _make_fhir_request(
+    method: str,
+    url: str,
+    region_name: str,
+    json_data: Optional[Dict[str, Any]] = None,
+    params: Optional[Dict[str, Any]] = None,
+    headers: Optional[Dict[str, str]] = None
+) -> Dict[str, Any]:
+    """Make an authenticated FHIR API request to HealthLake."""
+    # Get AWS SigV4 signed headers
+    session = boto3.Session()
+    credentials = session.get_credentials()
+    
+    # Prepare headers
+    request_headers = {
+        'Content-Type': 'application/fhir+json',
+        'Accept': 'application/fhir+json'
+    }
+    if headers:
+        request_headers.update(headers)
+    
+    # Create a request with AWS SigV4 authentication
+    auth = boto3.auth.SigV4Auth(credentials, 'healthlake', region_name)
+    request = requests.Request(
+        method=method,
+        url=url,
+        json=json_data,
+        params=params,
+        headers=request_headers
+    )
+    prepared_request = request.prepare()
+    auth.add_auth(prepared_request)
+    
+    # Send the request
+    with requests.Session() as session:
+        response = session.send(prepared_request)
+        
+        # Handle FHIR-specific error responses
+        if not response.ok:
+            try:
+                error_data = response.json()
+                if error_data.get('resourceType') == 'OperationOutcome':
+                    # Extract FHIR OperationOutcome details
+                    issues = error_data.get('issue', [])
+                    error_messages = []
+                    for issue in issues:
+                        severity = issue.get('severity', 'error')
+                        code = issue.get('code', 'unknown')
+                        details = issue.get('details', {}).get('text', issue.get('diagnostics', ''))
+                        error_messages.append(f"{severity.upper()}: {code} - {details}")
+                    
+                    raise Exception(f"FHIR Operation Failed: {'; '.join(error_messages)}")
+                else:
+                    raise Exception(f"HTTP {response.status_code}: {response.text}")
+            except ValueError:
+                # Not JSON response
+                response.raise_for_status()
+        
+        # Return JSON response or empty dict for successful operations without content
+        if response.content:
+            return response.json()
+        else:
+            return {"status": "success", "statusCode": response.status_code}
 
 
 @mcp.tool()
@@ -426,15 +500,17 @@ def read_fhir_resource(
     datastore_id: str,
     resource_type: str,
     resource_id: str,
+    version_id: Optional[str] = None,
     region_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Read a FHIR resource by ID.
+    Read a FHIR resource by ID using HealthLake FHIR API.
     
     Args:
         datastore_id: The AWS-generated ID for the datastore
         resource_type: The FHIR resource type (e.g., Patient, Observation)
         resource_id: The ID of the FHIR resource
+        version_id: Optional specific version ID to retrieve
         region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
     
     Returns:
@@ -444,29 +520,15 @@ def read_fhir_resource(
         region_name = os.getenv('AWS_REGION', 'us-west-2')
     
     # Get the datastore endpoint
-    client = get_healthlake_client(region_name)
-    datastore_info = client.describe_fhir_datastore(DatastoreId=datastore_id)
-    endpoint = datastore_info['DatastoreProperties']['DatastoreEndpoint']
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
     
     # Construct the URL for the FHIR resource
-    url = f"{endpoint}{resource_type}/{resource_id}"
+    if version_id:
+        url = f"{endpoint}{resource_type}/{resource_id}/_history/{version_id}"
+    else:
+        url = f"{endpoint}{resource_type}/{resource_id}"
     
-    # Get AWS SigV4 signed headers
-    session = boto3.Session()
-    credentials = session.get_credentials()
-    
-    # Create a request with AWS SigV4 authentication
-    auth = boto3.auth.SigV4Auth(credentials, 'healthlake', region_name)
-    request = requests.Request('GET', url)
-    prepared_request = request.prepare()
-    auth.add_auth(prepared_request)
-    
-    # Send the request
-    with requests.Session() as session:
-        response = session.send(prepared_request)
-        response.raise_for_status()  # Raise an exception for HTTP errors
-        
-        return response.json()
+    return _make_fhir_request('GET', url, region_name)
 
 
 @mcp.tool()
@@ -478,7 +540,7 @@ def search_fhir_resources(
     region_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Search for FHIR resources.
+    Search for FHIR resources using HealthLake FHIR API.
     
     Args:
         datastore_id: The AWS-generated ID for the datastore
@@ -487,35 +549,18 @@ def search_fhir_resources(
         region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
     
     Returns:
-        Dict containing the search results
+        Dict containing the search results as a FHIR Bundle
     """
     if not region_name:
         region_name = os.getenv('AWS_REGION', 'us-west-2')
     
     # Get the datastore endpoint
-    client = get_healthlake_client(region_name)
-    datastore_info = client.describe_fhir_datastore(DatastoreId=datastore_id)
-    endpoint = datastore_info['DatastoreProperties']['DatastoreEndpoint']
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
     
     # Construct the URL for the FHIR search
     url = f"{endpoint}{resource_type}"
     
-    # Get AWS SigV4 signed headers
-    session = boto3.Session()
-    credentials = session.get_credentials()
-    
-    # Create a request with AWS SigV4 authentication
-    auth = boto3.auth.SigV4Auth(credentials, 'healthlake', region_name)
-    request = requests.Request('GET', url, params=query_parameters)
-    prepared_request = request.prepare()
-    auth.add_auth(prepared_request)
-    
-    # Send the request
-    with requests.Session() as session:
-        response = session.send(prepared_request)
-        response.raise_for_status()  # Raise an exception for HTTP errors
-        
-        return response.json()
+    return _make_fhir_request('GET', url, region_name, params=query_parameters)
 
 
 @mcp.tool()
@@ -524,49 +569,48 @@ def create_fhir_resource(
     datastore_id: str,
     resource_type: str,
     resource_data: Dict[str, Any],
+    if_none_exist: Optional[str] = None,
     region_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Create a new FHIR resource.
+    Create a new FHIR resource using HealthLake FHIR API.
     
     Args:
         datastore_id: The AWS-generated ID for the datastore
         resource_type: The FHIR resource type (e.g., Patient, Observation)
         resource_data: The FHIR resource data as a dictionary
+        if_none_exist: Optional conditional create parameter to prevent duplicates
         region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
     
     Returns:
-        Dict containing the created FHIR resource
+        Dict containing the created FHIR resource with server-assigned ID
     """
     mutation_check()
     
     if not region_name:
         region_name = os.getenv('AWS_REGION', 'us-west-2')
     
+    # Validate that resourceType matches the URL
+    if resource_data.get('resourceType') != resource_type:
+        raise ValueError(f"Resource type mismatch: URL specifies '{resource_type}' but resource contains '{resource_data.get('resourceType')}'")
+    
+    # Remove id field for create operations (server will assign)
+    resource_data = resource_data.copy()
+    if 'id' in resource_data:
+        del resource_data['id']
+    
     # Get the datastore endpoint
-    client = get_healthlake_client(region_name)
-    datastore_info = client.describe_fhir_datastore(DatastoreId=datastore_id)
-    endpoint = datastore_info['DatastoreProperties']['DatastoreEndpoint']
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
     
     # Construct the URL for the FHIR resource
     url = f"{endpoint}{resource_type}"
     
-    # Get AWS SigV4 signed headers
-    session = boto3.Session()
-    credentials = session.get_credentials()
+    # Add conditional create header if specified
+    headers = {}
+    if if_none_exist:
+        headers['If-None-Exist'] = if_none_exist
     
-    # Create a request with AWS SigV4 authentication
-    auth = boto3.auth.SigV4Auth(credentials, 'healthlake', region_name)
-    request = requests.Request('POST', url, json=resource_data)
-    prepared_request = request.prepare()
-    auth.add_auth(prepared_request)
-    
-    # Send the request
-    with requests.Session() as session:
-        response = session.send(prepared_request)
-        response.raise_for_status()  # Raise an exception for HTTP errors
-        
-        return response.json()
+    return _make_fhir_request('POST', url, region_name, json_data=resource_data, headers=headers)
 
 
 @mcp.tool()
@@ -576,16 +620,18 @@ def update_fhir_resource(
     resource_type: str,
     resource_id: str,
     resource_data: Dict[str, Any],
+    if_match: Optional[str] = None,
     region_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Update an existing FHIR resource.
+    Update an existing FHIR resource using HealthLake FHIR API.
     
     Args:
         datastore_id: The AWS-generated ID for the datastore
         resource_type: The FHIR resource type (e.g., Patient, Observation)
         resource_id: The ID of the FHIR resource to update
         resource_data: The updated FHIR resource data as a dictionary
+        if_match: Optional version ID for optimistic concurrency control
         region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
     
     Returns:
@@ -596,34 +642,29 @@ def update_fhir_resource(
     if not region_name:
         region_name = os.getenv('AWS_REGION', 'us-west-2')
     
+    # Validate that resourceType matches the URL
+    if resource_data.get('resourceType') != resource_type:
+        raise ValueError(f"Resource type mismatch: URL specifies '{resource_type}' but resource contains '{resource_data.get('resourceType')}'")
+    
+    # Ensure the resource ID in the URL matches the one in the resource data
+    resource_data = resource_data.copy()
+    if 'id' not in resource_data:
+        resource_data['id'] = resource_id
+    elif resource_data['id'] != resource_id:
+        raise ValueError(f"Resource ID mismatch: URL specifies '{resource_id}' but resource contains '{resource_data['id']}'")
+    
     # Get the datastore endpoint
-    client = get_healthlake_client(region_name)
-    datastore_info = client.describe_fhir_datastore(DatastoreId=datastore_id)
-    endpoint = datastore_info['DatastoreProperties']['DatastoreEndpoint']
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
     
     # Construct the URL for the FHIR resource
     url = f"{endpoint}{resource_type}/{resource_id}"
     
-    # Ensure the resource ID in the URL matches the one in the resource data
-    if 'id' not in resource_data:
-        resource_data['id'] = resource_id
+    # Add conditional update header if specified
+    headers = {}
+    if if_match:
+        headers['If-Match'] = if_match
     
-    # Get AWS SigV4 signed headers
-    session = boto3.Session()
-    credentials = session.get_credentials()
-    
-    # Create a request with AWS SigV4 authentication
-    auth = boto3.auth.SigV4Auth(credentials, 'healthlake', region_name)
-    request = requests.Request('PUT', url, json=resource_data)
-    prepared_request = request.prepare()
-    auth.add_auth(prepared_request)
-    
-    # Send the request
-    with requests.Session() as session:
-        response = session.send(prepared_request)
-        response.raise_for_status()  # Raise an exception for HTTP errors
-        
-        return response.json()
+    return _make_fhir_request('PUT', url, region_name, json_data=resource_data, headers=headers)
 
 
 @mcp.tool()
@@ -632,15 +673,17 @@ def delete_fhir_resource(
     datastore_id: str,
     resource_type: str,
     resource_id: str,
+    if_match: Optional[str] = None,
     region_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Delete a FHIR resource.
+    Delete a FHIR resource using HealthLake FHIR API.
     
     Args:
         datastore_id: The AWS-generated ID for the datastore
         resource_type: The FHIR resource type (e.g., Patient, Observation)
         resource_id: The ID of the FHIR resource to delete
+        if_match: Optional version ID for optimistic concurrency control
         region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
     
     Returns:
@@ -652,33 +695,17 @@ def delete_fhir_resource(
         region_name = os.getenv('AWS_REGION', 'us-west-2')
     
     # Get the datastore endpoint
-    client = get_healthlake_client(region_name)
-    datastore_info = client.describe_fhir_datastore(DatastoreId=datastore_id)
-    endpoint = datastore_info['DatastoreProperties']['DatastoreEndpoint']
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
     
     # Construct the URL for the FHIR resource
     url = f"{endpoint}{resource_type}/{resource_id}"
     
-    # Get AWS SigV4 signed headers
-    session = boto3.Session()
-    credentials = session.get_credentials()
+    # Add conditional delete header if specified
+    headers = {}
+    if if_match:
+        headers['If-Match'] = if_match
     
-    # Create a request with AWS SigV4 authentication
-    auth = boto3.auth.SigV4Auth(credentials, 'healthlake', region_name)
-    request = requests.Request('DELETE', url)
-    prepared_request = request.prepare()
-    auth.add_auth(prepared_request)
-    
-    # Send the request
-    with requests.Session() as session:
-        response = session.send(prepared_request)
-        response.raise_for_status()  # Raise an exception for HTTP errors
-        
-        # DELETE might not return content
-        if response.content:
-            return response.json()
-        else:
-            return {"status": "success", "statusCode": response.status_code}
+    return _make_fhir_request('DELETE', url, region_name, headers=headers)
 
 
 @mcp.tool()
@@ -761,6 +788,586 @@ def list_tags_for_resource(
     
     response = client.list_tags_for_resource(ResourceARN=resource_arn)
     return response
+
+
+@mcp.tool()
+@handle_exceptions
+def create_fhir_bundle(
+    datastore_id: str,
+    bundle_resources: List[Dict[str, Any]],
+    bundle_type: str = "transaction",
+    region_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Create a FHIR Bundle with multiple resources for batch processing using HealthLake FHIR API.
+    
+    Args:
+        datastore_id: The AWS-generated ID for the datastore
+        bundle_resources: List of FHIR resources to include in the bundle
+        bundle_type: Type of bundle (transaction, batch, collection, etc.)
+        region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
+    
+    Returns:
+        Dict containing the created FHIR Bundle response
+    """
+    mutation_check()
+    
+    if not region_name:
+        region_name = os.getenv('AWS_REGION', 'us-west-2')
+    
+    # Create FHIR Bundle structure
+    bundle = {
+        "resourceType": "Bundle",
+        "id": str(uuid.uuid4()),
+        "type": bundle_type,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "entry": []
+    }
+    
+    # Add resources to bundle
+    for resource in bundle_resources:
+        entry = {
+            "resource": resource
+        }
+        
+        # Add request information for transaction/batch bundles
+        if bundle_type in ["transaction", "batch"]:
+            resource_type = resource.get("resourceType", "")
+            if "id" in resource:
+                entry["request"] = {
+                    "method": "PUT",
+                    "url": f"{resource_type}/{resource['id']}"
+                }
+            else:
+                entry["request"] = {
+                    "method": "POST",
+                    "url": resource_type
+                }
+        
+        bundle["entry"].append(entry)
+    
+    # Get the datastore endpoint
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
+    
+    # Send bundle to HealthLake
+    url = f"{endpoint}"
+    
+    return _make_fhir_request('POST', url, region_name, json_data=bundle)
+
+
+@mcp.tool()
+@handle_exceptions
+def search_fhir_resources_advanced(
+    datastore_id: str,
+    resource_type: str,
+    search_parameters: Optional[Dict[str, Any]] = None,
+    include_parameters: Optional[List[str]] = None,
+    revinclude_parameters: Optional[List[str]] = None,
+    sort_parameters: Optional[List[str]] = None,
+    count: Optional[int] = None,
+    region_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Advanced search for FHIR resources with additional parameters using HealthLake FHIR API.
+    
+    Args:
+        datastore_id: The AWS-generated ID for the datastore
+        resource_type: The FHIR resource type to search
+        search_parameters: Dictionary of search parameters
+        include_parameters: List of _include parameters for related resources
+        revinclude_parameters: List of _revinclude parameters for reverse includes
+        sort_parameters: List of _sort parameters for result ordering
+        count: Number of results to return per page
+        region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
+    
+    Returns:
+        Dict containing the advanced search results as a FHIR Bundle
+    """
+    if not region_name:
+        region_name = os.getenv('AWS_REGION', 'us-west-2')
+    
+    # Build query parameters
+    params = {}
+    
+    if search_parameters:
+        params.update(search_parameters)
+    
+    if include_parameters:
+        params['_include'] = include_parameters
+    
+    if revinclude_parameters:
+        params['_revinclude'] = revinclude_parameters
+    
+    if sort_parameters:
+        params['_sort'] = ','.join(sort_parameters)
+    
+    if count:
+        params['_count'] = count
+    
+    # Get the datastore endpoint
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
+    
+    # Construct the URL for the FHIR search
+    url = f"{endpoint}{resource_type}"
+    
+    return _make_fhir_request('GET', url, region_name, params=params)
+
+
+@mcp.tool()
+@handle_exceptions
+def validate_fhir_resource(
+    resource_data: Dict[str, Any],
+    resource_type: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Validate a FHIR resource structure and provide feedback.
+    
+    Args:
+        resource_data: The FHIR resource data to validate
+        resource_type: Expected resource type (optional)
+    
+    Returns:
+        Dict containing validation results and any issues found
+    """
+    validation_result = {
+        "valid": True,
+        "issues": [],
+        "warnings": []
+    }
+    
+    # Check if resourceType is present
+    if "resourceType" not in resource_data:
+        validation_result["valid"] = False
+        validation_result["issues"].append("Missing required 'resourceType' field")
+    else:
+        actual_type = resource_data["resourceType"]
+        
+        # Check if resource type matches expected type
+        if resource_type and actual_type != resource_type:
+            validation_result["valid"] = False
+            validation_result["issues"].append(
+                f"Resource type mismatch: expected '{resource_type}', got '{actual_type}'"
+            )
+    
+    # Check for required fields based on resource type
+    resource_type_to_check = resource_type or resource_data.get("resourceType")
+    
+    if resource_type_to_check == "Patient":
+        # Basic Patient validation
+        if "name" not in resource_data and "identifier" not in resource_data:
+            validation_result["warnings"].append(
+                "Patient should have either 'name' or 'identifier' field"
+            )
+    
+    elif resource_type_to_check == "Observation":
+        # Basic Observation validation
+        required_fields = ["status", "code"]
+        for field in required_fields:
+            if field not in resource_data:
+                validation_result["valid"] = False
+                validation_result["issues"].append(f"Missing required field: '{field}'")
+    
+    elif resource_type_to_check == "Condition":
+        # Basic Condition validation
+        if "subject" not in resource_data:
+            validation_result["valid"] = False
+            validation_result["issues"].append("Missing required field: 'subject'")
+    
+    # Check for common FHIR patterns
+    if "id" in resource_data:
+        resource_id = resource_data["id"]
+        if not isinstance(resource_id, str) or len(resource_id) == 0:
+            validation_result["issues"].append("Resource 'id' must be a non-empty string")
+    
+    return validation_result
+
+
+@mcp.tool()
+@handle_exceptions
+def create_patient_template(
+    family_name: str,
+    given_names: List[str],
+    gender: str,
+    birth_date: str,
+    identifier_system: Optional[str] = None,
+    identifier_value: Optional[str] = None,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+    address: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Create a FHIR Patient resource template with common fields.
+    
+    Args:
+        family_name: Patient's family name
+        given_names: List of given names
+        gender: Patient's gender (male, female, other, unknown)
+        birth_date: Birth date in YYYY-MM-DD format
+        identifier_system: Optional identifier system (e.g., SSN, MRN)
+        identifier_value: Optional identifier value
+        phone: Optional phone number
+        email: Optional email address
+        address: Optional address dictionary
+    
+    Returns:
+        Dict containing a FHIR Patient resource template
+    """
+    patient = {
+        "resourceType": "Patient",
+        "name": [
+            {
+                "family": family_name,
+                "given": given_names
+            }
+        ],
+        "gender": gender,
+        "birthDate": birth_date
+    }
+    
+    # Add identifier if provided
+    if identifier_system and identifier_value:
+        patient["identifier"] = [
+            {
+                "system": identifier_system,
+                "value": identifier_value
+            }
+        ]
+    
+    # Add contact information
+    telecom = []
+    if phone:
+        telecom.append({
+            "system": "phone",
+            "value": phone,
+            "use": "home"
+        })
+    
+    if email:
+        telecom.append({
+            "system": "email",
+            "value": email
+        })
+    
+    if telecom:
+        patient["telecom"] = telecom
+    
+    # Add address if provided
+    if address:
+        patient["address"] = [address]
+    
+    return patient
+
+
+@mcp.tool()
+@handle_exceptions
+def create_observation_template(
+    patient_reference: str,
+    code_system: str,
+    code_value: str,
+    code_display: str,
+    status: str = "final",
+    value_quantity: Optional[Dict[str, Any]] = None,
+    value_string: Optional[str] = None,
+    effective_datetime: Optional[str] = None,
+    category_code: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Create a FHIR Observation resource template.
+    
+    Args:
+        patient_reference: Reference to the patient (e.g., "Patient/123")
+        code_system: Coding system for the observation code
+        code_value: The observation code value
+        code_display: Human-readable display for the code
+        status: Observation status (final, preliminary, etc.)
+        value_quantity: Optional quantity value with unit
+        value_string: Optional string value
+        effective_datetime: Optional datetime when observation was made
+        category_code: Optional category code (vital-signs, laboratory, etc.)
+    
+    Returns:
+        Dict containing a FHIR Observation resource template
+    """
+    observation = {
+        "resourceType": "Observation",
+        "status": status,
+        "code": {
+            "coding": [
+                {
+                    "system": code_system,
+                    "code": code_value,
+                    "display": code_display
+                }
+            ]
+        },
+        "subject": {
+            "reference": patient_reference
+        }
+    }
+    
+    # Add category if provided
+    if category_code:
+        observation["category"] = [
+            {
+                "coding": [
+                    {
+                        "system": "http://terminology.hl7.org/CodeSystem/observation-category",
+                        "code": category_code
+                    }
+                ]
+            }
+        ]
+    
+    # Add value
+    if value_quantity:
+        observation["valueQuantity"] = value_quantity
+    elif value_string:
+        observation["valueString"] = value_string
+    
+    # Add effective datetime
+    if effective_datetime:
+        observation["effectiveDateTime"] = effective_datetime
+    else:
+        observation["effectiveDateTime"] = datetime.utcnow().isoformat() + "Z"
+    
+    return observation
+
+
+@mcp.tool()
+@handle_exceptions
+def get_fhir_resource_history(
+    datastore_id: str,
+    resource_type: str,
+    resource_id: str,
+    count: Optional[int] = None,
+    since: Optional[str] = None,
+    region_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get the version history of a FHIR resource using HealthLake FHIR API.
+    
+    Args:
+        datastore_id: The AWS-generated ID for the datastore
+        resource_type: The FHIR resource type
+        resource_id: The ID of the FHIR resource
+        count: Optional number of history entries to return
+        since: Optional timestamp to get history since (ISO 8601 format)
+        region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
+    
+    Returns:
+        Dict containing the resource version history as a FHIR Bundle
+    """
+    if not region_name:
+        region_name = os.getenv('AWS_REGION', 'us-west-2')
+    
+    # Get the datastore endpoint
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
+    
+    # Construct the URL for the FHIR resource history
+    url = f"{endpoint}{resource_type}/{resource_id}/_history"
+    
+    # Build query parameters
+    params = {}
+    if count:
+        params['_count'] = count
+    if since:
+        params['_since'] = since
+    
+    return _make_fhir_request('GET', url, region_name, params=params)
+
+
+@mcp.tool()
+@handle_exceptions
+def get_datastore_capabilities(
+    datastore_id: str,
+    region_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get the FHIR capabilities statement for a datastore using HealthLake FHIR API.
+    
+    Args:
+        datastore_id: The AWS-generated ID for the datastore
+        region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
+    
+    Returns:
+        Dict containing the FHIR CapabilityStatement
+    """
+    if not region_name:
+        region_name = os.getenv('AWS_REGION', 'us-west-2')
+    
+    # Get the datastore endpoint
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
+    
+    # Construct the URL for the capabilities statement
+    url = f"{endpoint}metadata"
+    
+    return _make_fhir_request('GET', url, region_name)
+
+
+@mcp.tool()
+@handle_exceptions
+def patch_fhir_resource(
+    datastore_id: str,
+    resource_type: str,
+    resource_id: str,
+    patch_operations: List[Dict[str, Any]],
+    patch_format: str = "json-patch",
+    if_match: Optional[str] = None,
+    region_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Patch a FHIR resource using JSON Patch or FHIRPath Patch operations.
+    
+    Args:
+        datastore_id: The AWS-generated ID for the datastore
+        resource_type: The FHIR resource type (e.g., Patient, Observation)
+        resource_id: The ID of the FHIR resource to patch
+        patch_operations: List of patch operations
+        patch_format: Format of patch operations (json-patch or fhir-patch)
+        if_match: Optional version ID for optimistic concurrency control
+        region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
+    
+    Returns:
+        Dict containing the patched FHIR resource
+    """
+    mutation_check()
+    
+    if not region_name:
+        region_name = os.getenv('AWS_REGION', 'us-west-2')
+    
+    # Get the datastore endpoint
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
+    
+    # Construct the URL for the FHIR resource
+    url = f"{endpoint}{resource_type}/{resource_id}"
+    
+    # Set appropriate content type based on patch format
+    headers = {}
+    if patch_format == "json-patch":
+        headers['Content-Type'] = 'application/json-patch+json'
+    elif patch_format == "fhir-patch":
+        headers['Content-Type'] = 'application/fhir+json'
+    
+    if if_match:
+        headers['If-Match'] = if_match
+    
+    return _make_fhir_request('PATCH', url, region_name, json_data=patch_operations, headers=headers)
+
+
+@mcp.tool()
+@handle_exceptions
+def search_all_resources(
+    datastore_id: str,
+    query_parameters: Optional[Dict[str, str]] = None,
+    count: Optional[int] = None,
+    region_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Search across all resource types in a datastore using HealthLake FHIR API.
+    
+    Args:
+        datastore_id: The AWS-generated ID for the datastore
+        query_parameters: Optional dictionary of search parameters
+        count: Optional number of results to return per page
+        region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
+    
+    Returns:
+        Dict containing the search results as a FHIR Bundle
+    """
+    if not region_name:
+        region_name = os.getenv('AWS_REGION', 'us-west-2')
+    
+    # Build query parameters
+    params = {}
+    if query_parameters:
+        params.update(query_parameters)
+    if count:
+        params['_count'] = count
+    
+    # Get the datastore endpoint
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
+    
+    # Search across all resources using the base URL
+    url = f"{endpoint}"
+    
+    return _make_fhir_request('GET', url, region_name, params=params)
+
+
+@mcp.tool()
+@handle_exceptions
+def validate_fhir_resource_against_profile(
+    datastore_id: str,
+    resource_data: Dict[str, Any],
+    profile_url: Optional[str] = None,
+    region_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Validate a FHIR resource against a profile using HealthLake FHIR API.
+    
+    Args:
+        datastore_id: The AWS-generated ID for the datastore
+        resource_data: The FHIR resource data to validate
+        profile_url: Optional URL of the profile to validate against
+        region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
+    
+    Returns:
+        Dict containing the validation results as an OperationOutcome
+    """
+    if not region_name:
+        region_name = os.getenv('AWS_REGION', 'us-west-2')
+    
+    # Get the datastore endpoint
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
+    
+    # Construct the URL for validation
+    resource_type = resource_data.get('resourceType', '')
+    url = f"{endpoint}{resource_type}/$validate"
+    
+    # Add profile parameter if specified
+    params = {}
+    if profile_url:
+        params['profile'] = profile_url
+    
+    return _make_fhir_request('POST', url, region_name, json_data=resource_data, params=params)
+
+
+@mcp.tool()
+@handle_exceptions
+def get_fhir_resource_compartment(
+    datastore_id: str,
+    compartment_type: str,
+    compartment_id: str,
+    resource_type: Optional[str] = None,
+    query_parameters: Optional[Dict[str, str]] = None,
+    region_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get resources from a FHIR compartment (e.g., Patient compartment).
+    
+    Args:
+        datastore_id: The AWS-generated ID for the datastore
+        compartment_type: The compartment type (e.g., Patient, Encounter)
+        compartment_id: The ID of the compartment resource
+        resource_type: Optional specific resource type to search within compartment
+        query_parameters: Optional dictionary of search parameters
+        region_name: AWS region name (defaults to AWS_REGION env var or us-west-2)
+    
+    Returns:
+        Dict containing the compartment search results as a FHIR Bundle
+    """
+    if not region_name:
+        region_name = os.getenv('AWS_REGION', 'us-west-2')
+    
+    # Get the datastore endpoint
+    endpoint = _get_fhir_endpoint(datastore_id, region_name)
+    
+    # Construct the URL for compartment search
+    if resource_type:
+        url = f"{endpoint}{compartment_type}/{compartment_id}/{resource_type}"
+    else:
+        url = f"{endpoint}{compartment_type}/{compartment_id}/*"
+    
+    return _make_fhir_request('GET', url, region_name, params=query_parameters)
 
 
 def main():

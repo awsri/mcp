@@ -77,7 +77,8 @@ class TestHealthLakeServer:
     @mock_aws
     def test_read_fhir_resource(self, aws_credentials, mock_requests_session):
         """Test reading a FHIR resource."""
-        with patch('boto3.client') as mock_client:
+        with patch('boto3.client') as mock_client, \
+             patch('boto3.Session') as mock_session:
             # Mock the describe_fhir_datastore call
             mock_client_instance = MagicMock()
             mock_client.return_value = mock_client_instance
@@ -86,6 +87,16 @@ class TestHealthLakeServer:
                     'DatastoreEndpoint': 'https://healthlake.us-west-2.amazonaws.com/datastore/test-id/r4/'
                 }
             }
+            
+            # Mock the Session and credentials
+            mock_credentials = MagicMock()
+            mock_credentials.access_key = 'test-access-key'
+            mock_credentials.secret_key = 'test-secret-key'
+            mock_credentials.token = 'test-token'
+            
+            mock_session_instance = MagicMock()
+            mock_session_instance.get_credentials.return_value = mock_credentials
+            mock_session.return_value = mock_session_instance
 
             result = read_fhir_resource(
                 datastore_id='test-datastore-id',
@@ -172,7 +183,8 @@ class TestHealthLakeServer:
     @mock_aws
     def test_search_fhir_resources_advanced(self, aws_credentials, mock_requests_session):
         """Test advanced FHIR resource search."""
-        with patch('boto3.client') as mock_client:
+        with patch('boto3.client') as mock_client, \
+             patch('boto3.Session') as mock_session:
             # Mock the describe_fhir_datastore call
             mock_client_instance = MagicMock()
             mock_client.return_value = mock_client_instance
@@ -181,6 +193,16 @@ class TestHealthLakeServer:
                     'DatastoreEndpoint': 'https://healthlake.us-west-2.amazonaws.com/datastore/test-id/r4/'
                 }
             }
+            
+            # Mock the Session and credentials
+            mock_credentials = MagicMock()
+            mock_credentials.access_key = 'test-access-key'
+            mock_credentials.secret_key = 'test-secret-key'
+            mock_credentials.token = 'test-token'
+            
+            mock_session_instance = MagicMock()
+            mock_session_instance.get_credentials.return_value = mock_credentials
+            mock_session.return_value = mock_session_instance
 
             result = search_fhir_resources_advanced(
                 datastore_id='test-datastore-id',
@@ -198,7 +220,8 @@ class TestHealthLakeServer:
     @patch.dict(os.environ, {'HEALTHLAKE_MCP_READONLY': 'false'})
     def test_create_fhir_bundle(self, aws_credentials, mock_requests_session):
         """Test creating a FHIR bundle."""
-        with patch('boto3.client') as mock_client:
+        with patch('boto3.client') as mock_client, \
+             patch('boto3.Session') as mock_session:
             # Mock the describe_fhir_datastore call
             mock_client_instance = MagicMock()
             mock_client.return_value = mock_client_instance
@@ -207,6 +230,16 @@ class TestHealthLakeServer:
                     'DatastoreEndpoint': 'https://healthlake.us-west-2.amazonaws.com/datastore/test-id/r4/'
                 }
             }
+            
+            # Mock the Session and credentials
+            mock_credentials = MagicMock()
+            mock_credentials.access_key = 'test-access-key'
+            mock_credentials.secret_key = 'test-secret-key'
+            mock_credentials.token = 'test-token'
+            
+            mock_session_instance = MagicMock()
+            mock_session_instance.get_credentials.return_value = mock_credentials
+            mock_session.return_value = mock_session_instance
 
             bundle_resources = [
                 {
@@ -229,7 +262,8 @@ class TestHealthLakeServer:
     @mock_aws
     def test_get_fhir_resource_history(self, aws_credentials, mock_requests_session):
         """Test getting FHIR resource history."""
-        with patch('boto3.client') as mock_client:
+        with patch('boto3.client') as mock_client, \
+             patch('boto3.Session') as mock_session:
             # Mock the describe_fhir_datastore call
             mock_client_instance = MagicMock()
             mock_client.return_value = mock_client_instance
@@ -238,6 +272,16 @@ class TestHealthLakeServer:
                     'DatastoreEndpoint': 'https://healthlake.us-west-2.amazonaws.com/datastore/test-id/r4/'
                 }
             }
+            
+            # Mock the Session and credentials
+            mock_credentials = MagicMock()
+            mock_credentials.access_key = 'test-access-key'
+            mock_credentials.secret_key = 'test-secret-key'
+            mock_credentials.token = 'test-token'
+            
+            mock_session_instance = MagicMock()
+            mock_session_instance.get_credentials.return_value = mock_credentials
+            mock_session.return_value = mock_session_instance
 
             result = get_fhir_resource_history(
                 datastore_id='test-datastore-id',
@@ -251,7 +295,8 @@ class TestHealthLakeServer:
     @mock_aws
     def test_get_datastore_capabilities(self, aws_credentials, mock_requests_session):
         """Test getting datastore capabilities."""
-        with patch('boto3.client') as mock_client:
+        with patch('boto3.client') as mock_client, \
+             patch('boto3.Session') as mock_session:
             # Mock the describe_fhir_datastore call
             mock_client_instance = MagicMock()
             mock_client.return_value = mock_client_instance
@@ -260,6 +305,16 @@ class TestHealthLakeServer:
                     'DatastoreEndpoint': 'https://healthlake.us-west-2.amazonaws.com/datastore/test-id/r4/'
                 }
             }
+            
+            # Mock the Session and credentials
+            mock_credentials = MagicMock()
+            mock_credentials.access_key = 'test-access-key'
+            mock_credentials.secret_key = 'test-secret-key'
+            mock_credentials.token = 'test-token'
+            
+            mock_session_instance = MagicMock()
+            mock_session_instance.get_credentials.return_value = mock_credentials
+            mock_session.return_value = mock_session_instance
 
             result = get_datastore_capabilities(datastore_id='test-datastore-id')
 
@@ -285,7 +340,8 @@ def test_list_datastores(aws_credentials):
 @mock_aws
 def test_read_fhir_resource(aws_credentials, mock_requests_session):
     """Test reading a FHIR resource."""
-    with patch('boto3.client') as mock_client:
+    with patch('boto3.client') as mock_client, \
+         patch('boto3.Session') as mock_session:
         mock_client_instance = MagicMock()
         mock_client_instance.describe_fhir_datastore.return_value = {
             'DatastoreProperties': {
@@ -293,6 +349,16 @@ def test_read_fhir_resource(aws_credentials, mock_requests_session):
             }
         }
         mock_client.return_value = mock_client_instance
+        
+        # Mock the Session and credentials
+        mock_credentials = MagicMock()
+        mock_credentials.access_key = 'test-access-key'
+        mock_credentials.secret_key = 'test-secret-key'
+        mock_credentials.token = 'test-token'
+        
+        mock_session_instance = MagicMock()
+        mock_session_instance.get_credentials.return_value = mock_credentials
+        mock_session.return_value = mock_session_instance
 
         result = read_fhir_resource(datastore_id='123', resource_type='Patient', resource_id='456')
 
@@ -304,7 +370,8 @@ def test_read_fhir_resource(aws_credentials, mock_requests_session):
 @mock_aws
 def test_create_fhir_resource(aws_credentials, mock_requests_session):
     """Test creating a FHIR resource."""
-    with patch('boto3.client') as mock_client:
+    with patch('boto3.client') as mock_client, \
+         patch('boto3.Session') as mock_session:
         mock_client_instance = MagicMock()
         mock_client_instance.describe_fhir_datastore.return_value = {
             'DatastoreProperties': {
@@ -312,6 +379,16 @@ def test_create_fhir_resource(aws_credentials, mock_requests_session):
             }
         }
         mock_client.return_value = mock_client_instance
+        
+        # Mock the Session and credentials
+        mock_credentials = MagicMock()
+        mock_credentials.access_key = 'test-access-key'
+        mock_credentials.secret_key = 'test-secret-key'
+        mock_credentials.token = 'test-token'
+        
+        mock_session_instance = MagicMock()
+        mock_session_instance.get_credentials.return_value = mock_credentials
+        mock_session.return_value = mock_session_instance
 
         resource_data = {'resourceType': 'Patient', 'name': [{'family': 'Doe', 'given': ['John']}]}
 

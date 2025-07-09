@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Placeholder step
         run: echo "Claude code review workflow is currently disabled"
-        
+
   claude:
     name: Perform Code Review
     runs-on: ubuntu-latest
